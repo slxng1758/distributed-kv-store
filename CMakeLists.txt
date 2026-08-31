@@ -11,6 +11,16 @@ endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+# Build with `cmake -S . -B build -DENABLE_TSAN=ON` to verify the Phase 2
+# concurrency model (worker reactors + shared KVStore) is race-free.
+option(ENABLE_TSAN "Build with ThreadSanitizer" OFF)
+if(ENABLE_TSAN)
+  add_compile_options(-fsanitize=thread -g)
+  add_link_options(-fsanitize=thread)
+endif()
+
+find_package(Threads REQUIRED)
+
 add_library(kv_common STATIC
   src/common/protocol.cpp
   src/common/socket_utils.cpp
@@ -20,16 +30,15 @@ target_include_directories(kv_common PUBLIC src)
 add_executable(kvserver
   src/server/main.cpp
   src/server/server.cpp
+  src/server/worker_reactor.cpp
   src/server/kv_store.cpp
 )
-target_link_libraries(kvserver PRIVATE kv_common)
+target_link_libraries(kvserver PRIVATE kv_common Threads::Threads)
 
 add_executable(kvclient
   src/client/main.cpp
 )
 target_link_libraries(kvclient PRIVATE kv_common)
-
-find_package(Threads REQUIRED)
 
 add_executable(kvbench
   src/benchmark/main.cpp
@@ -45,6 +54,7 @@ add_executable(kv_store_test
   src/server/kv_store.cpp
 )
 target_include_directories(kv_store_test PRIVATE src)
+target_link_libraries(kv_store_test PRIVATE Threads::Threads)
 add_test(NAME kv_store_test COMMAND kv_store_test)
 
 add_executable(protocol_test

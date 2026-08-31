@@ -6,15 +6,20 @@ networking, concurrency, sharding, replication, and failure recovery.
 
 This is a fundamentals project, not tied to a specific application.
 
-## Status: Phase 1 -- single-node store + benchmark harness
+## Status: Phase 2 -- concurrency
 
-- `kvserver` -- single-threaded, `poll()`-based TCP server (GET/SET/DELETE)
+- `kvserver` -- N `poll()`-based reactor threads (`--threads`, default 4),
+  each owning a disjoint set of connections, sharing one lock-protected
+  `KVStore`. `--threads 1` reproduces Phase 1's single-threaded behavior.
 - `kvclient` -- one-shot CLI and interactive REPL for manual testing
 - `kvbench` -- multithreaded load generator with p50/p95/p99 latency and
   throughput reporting
 
-See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol and
-[docs/BENCHMARK.md](docs/BENCHMARK.md) for the benchmark methodology.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol,
+[docs/BENCHMARK.md](docs/BENCHMARK.md) for the benchmark methodology, and
+[docs/CONCURRENCY.md](docs/CONCURRENCY.md) for the Phase 2 architecture,
+correctness story, and the (honest, non-obvious) `--threads 1` vs
+`--threads N` benchmark result.
 
 ## Build & run
 
@@ -28,6 +33,7 @@ cmake -S . -B build && cmake --build build -j
 ctest --test-dir build                 # unit tests
 ./tests/smoke_test.sh                  # end-to-end correctness check
 ./scripts/run_benchmark.sh             # build -> test -> benchmark, end to end
+./scripts/run_concurrency_comparison.sh   # --threads 1 vs --threads N, same binary
 ```
 
 ## Manual testing

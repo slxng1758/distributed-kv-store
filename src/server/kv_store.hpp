@@ -1,15 +1,24 @@
 #pragma once
 
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 
 namespace kv {
 
-// In-memory key-value store. Not thread-safe: Phase 1's server touches it
-// from a single event-loop thread only. get() deliberately copies the value
-// out (rather than returning a reference into the map) because a future
-// concurrent version cannot safely hand back a reference after releasing a
-// lock -- this interface is designed for the locking it doesn't have yet.
+// In-memory key-value store. Thread-safe as of Phase 2: multiple
+// WorkerReactor threads call these methods concurrently on a shared
+// instance. get()/size() take a shared lock so concurrent reads don't
+// block each other; set()/remove() take an exclusive lock. Phase 1's
+// choice to have get() copy the value out (rather than return a reference
+// into map_) is exactly what makes this safe -- a reference into the map
+// could not be handed back safely once the lock is released.
+//
+// Note what this does NOT provide: individual operations are atomic, but
+// a compound sequence like "GET key, compute new value, SET key" is not --
+// two threads can race between their GET and their SET and one update can
+// be silently lost. That's why real stores expose atomic primitives like
+// INCR instead of making clients build read-modify-write themselves.
 class KVStore {
  public:
   KVStore() = default;
@@ -20,6 +29,7 @@ class KVStore {
   size_t size() const;
 
  private:
+  mutable std::shared_mutex mutex_;
   std::unordered_map<std::string, std::string> map_;
 };
 
