@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Starts kvserver, drives it via kvclient through GET/SET/DELETE, and
-# asserts exact output at each step. This is the required correctness gate
-# before trusting any benchmark run -- run_benchmark.sh runs this first and
-# aborts if it fails.
+# Drives GET/SET/DELETE via kvclient and asserts exact output at each step.
+# This is the required correctness gate before trusting any benchmark run --
+# run_benchmark.sh (and friends) run this first and abort if it fails.
+#
+# By default this spawns its own kvserver on $PORT. Set
+# SMOKE_TEST_EXTERNAL_SERVER=1 to instead test whatever is already
+# listening on $PORT (e.g. a kvrouter fronting a sharded cluster) --
+# the same GET/SET/DELETE assertions apply either way, since the router
+# speaks the identical client-facing protocol.
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,19 +17,25 @@ PORT="${SMOKE_TEST_PORT:-16380}"
 SERVER_BIN="$BUILD_DIR/kvserver"
 CLIENT_BIN="$BUILD_DIR/kvclient"
 
-if [[ ! -x "$SERVER_BIN" || ! -x "$CLIENT_BIN" ]]; then
-  echo "smoke_test: build kvserver and kvclient first (cmake --build $BUILD_DIR)" >&2
+if [[ ! -x "$CLIENT_BIN" ]]; then
+  echo "smoke_test: build kvclient first (cmake --build $BUILD_DIR)" >&2
   exit 1
 fi
 
-"$SERVER_BIN" --port "$PORT" &
-SERVER_PID=$!
+if [[ "${SMOKE_TEST_EXTERNAL_SERVER:-0}" != "1" ]]; then
+  if [[ ! -x "$SERVER_BIN" ]]; then
+    echo "smoke_test: build kvserver first (cmake --build $BUILD_DIR)" >&2
+    exit 1
+  fi
+  "$SERVER_BIN" --port "$PORT" &
+  SERVER_PID=$!
 
-cleanup() {
-  kill "$SERVER_PID" 2>/dev/null || true
-  wait "$SERVER_PID" 2>/dev/null || true
-}
-trap cleanup EXIT
+  cleanup() {
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  }
+  trap cleanup EXIT
+fi
 
 # Wait for the server to start accepting connections.
 ready=0

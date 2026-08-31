@@ -6,20 +6,30 @@ networking, concurrency, sharding, replication, and failure recovery.
 
 This is a fundamentals project, not tied to a specific application.
 
-## Status: Phase 2 -- concurrency
+## Status: Phase 3 -- sharding
 
 - `kvserver` -- N `poll()`-based reactor threads (`--threads`, default 4),
   each owning a disjoint set of connections, sharing one lock-protected
   `KVStore`. `--threads 1` reproduces Phase 1's single-threaded behavior.
+  Zero sharding awareness -- a plain, unmodified node.
+- `kvrouter` -- accepts client connections, routes each key to a backend
+  node via consistent hashing (`--nodes host:port,...`), forwards, relays
+  the response. Speaks the identical client-facing protocol as `kvserver`,
+  so `kvclient`/`kvbench` work against it unmodified.
+- `kvhashreport` -- deterministic (no servers needed) report comparing
+  modulo hashing vs. consistent hashing on key-distribution balance and
+  remap fraction when the cluster resizes.
 - `kvclient` -- one-shot CLI and interactive REPL for manual testing
 - `kvbench` -- multithreaded load generator with p50/p95/p99 latency and
   throughput reporting
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol,
-[docs/BENCHMARK.md](docs/BENCHMARK.md) for the benchmark methodology, and
-[docs/CONCURRENCY.md](docs/CONCURRENCY.md) for the Phase 2 architecture,
-correctness story, and the (honest, non-obvious) `--threads 1` vs
-`--threads N` benchmark result.
+[docs/BENCHMARK.md](docs/BENCHMARK.md) for the benchmark methodology,
+[docs/CONCURRENCY.md](docs/CONCURRENCY.md) for Phase 2, and
+[docs/SHARDING.md](docs/SHARDING.md) for Phase 3's architecture, the
+consistent-hashing ring (including a hash-quality bug it exposed), and the
+benchmark results -- a clean win on distribution balance, an honest,
+inconclusive result on throughput.
 
 ## Build & run
 
@@ -34,6 +44,7 @@ ctest --test-dir build                 # unit tests
 ./tests/smoke_test.sh                  # end-to-end correctness check
 ./scripts/run_benchmark.sh             # build -> test -> benchmark, end to end
 ./scripts/run_concurrency_comparison.sh   # --threads 1 vs --threads N, same binary
+./scripts/run_sharding_comparison.sh      # 1 node vs 3 nodes via kvrouter, + hash report
 ```
 
 ## Manual testing
