@@ -1,0 +1,6 @@
+build/
+results/*.json
+results/*.csv
+results/*.server_rusage.txt
+compile_commands.json
+.DS_Store
