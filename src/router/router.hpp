@@ -2,46 +2,71 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/hash_ring.hpp"
+#include "common/protocol.hpp"
 #include "common/socket_utils.hpp"
+#include "router/failure_detector.hpp"
+#include "router/node_address.hpp"
 
 namespace kv {
 
-struct NodeAddress {
-  std::string host;
-  uint16_t port = 0;
-  std::string id() const { return host + ":" + std::to_string(port); }
-};
-
-// Accepts client connections and forwards each request to whichever
-// backend node owns the request's key, per a consistent-hash ring built
-// once at startup from --nodes and never modified afterward. Backend
-// kvserver nodes are unmodified Phase 1/2 binaries with zero sharding
-// awareness -- all routing logic lives here, so this is also where
-// Phase 4's replication/failover logic will eventually live.
+// Accepts client connections and, per key, forwards to the replica
+// preference list (primary + next replication_factor-1 distinct nodes
+// clockwise on the ring, see ConsistentHashRing::get_nodes) rather than a
+// single node. Consistency model (see docs/REPLICATION.md for the full
+// tradeoff discussion):
+//   - WRITE (SET/DELETE): sent to every replica the FailureDetector
+//     currently considers alive; succeeds if at least one replica
+//     acknowledges. Not synchronized across replicas beyond "send to all
+//     of them" -- no quorum, no versioning, no repair for a replica that
+//     was down during the write.
+//   - READ (GET): tried against replicas in preference-list order;
+//     returns the first successful response. Backed by the "every write
+//     went to every live replica" invariant above, so in the no-failure
+//     steady state any live replica has the latest value.
+// A node that fails mid-request is marked down immediately (reactive
+// detection) so the *next* request skips straight past it instead of
+// re-discovering the failure -- this is what makes failover fast rather
+// than bounded by the heartbeat interval.
 //
-// Thread-per-connection: each client connection gets its own thread doing
-// blocking reads/forwards/writes. Simple and correct at the benchmark's
-// 50-connection scale. This is a deliberately different tradeoff from
-// Phase 1/2's poll()-based multiplexing -- that lesson is already
-// established, and Phase 3's teaching focus is the hashing/sharding logic,
-// not another I/O model.
+// Backend kvserver nodes are unmodified Phase 1/2/3 binaries with zero
+// replication awareness. Thread-per-connection, same tradeoff as Phase 3.
 class Router {
  public:
   Router(uint16_t port, std::vector<NodeAddress> nodes,
-         size_t virtual_nodes_per_node);
+         size_t virtual_nodes_per_node, size_t replication_factor);
+  ~Router();
+
+  Router(const Router&) = delete;
+  Router& operator=(const Router&) = delete;
 
   // Blocks forever, accepting and dispatching client connections.
   void run();
 
  private:
+  using BackendConns = std::unordered_map<std::string, net::Socket>;
+
   void handle_client(int client_fd);
+  net::Socket& backend_connection(const std::string& node_id, BackendConns& conns);
+  const NodeAddress* find_address(const std::string& node_id) const;
+
+  // Fans a write out to every live replica for req.key; returns the
+  // response from the first replica that acknowledged, or an Error
+  // response if none did.
+  protocol::Response route_write(const protocol::Request& req, BackendConns& conns);
+
+  // Tries replicas in preference-list order; returns the first success,
+  // or an Error response if every replica failed.
+  protocol::Response route_read(const protocol::Request& req, BackendConns& conns);
 
   net::Socket listen_socket_;
   std::vector<NodeAddress> nodes_;
   ConsistentHashRing ring_;
+  size_t replication_factor_;
+  FailureDetector failure_detector_;
 };
 
 }  // namespace kv

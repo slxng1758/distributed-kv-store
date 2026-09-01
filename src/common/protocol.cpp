@@ -1,6 +1,10 @@
 #include "common/protocol.hpp"
 
+#include <unistd.h>
+
 #include <cctype>
+#include <cerrno>
+#include <stdexcept>
 #include <vector>
 
 namespace kv::protocol {
@@ -69,6 +73,8 @@ std::string encode_request(const Request& req) {
       out += "\n";
       return out;
     }
+    case Command::Ping:
+      return "PING\n";
   }
   return "";
 }
@@ -87,6 +93,8 @@ std::string encode_deleted_response() { return "DELETED\n"; }
 std::string encode_error_response(const std::string& message) {
   return "ERROR " + message + "\n";
 }
+
+std::string encode_pong_response() { return "PONG\n"; }
 
 void IncrementalParser::feed(const char* data, size_t len) {
   buffer_.append(data, len);
@@ -124,6 +132,19 @@ ParseStatus IncrementalParser::try_parse_request(Request& out_request) {
     }
     out_request.command = (cmd == "GET") ? Command::Get : Command::Delete;
     out_request.key = tokens[1];
+    out_request.value.clear();
+    buffer_.erase(0, line_end + 1);
+    return ParseStatus::Complete;
+  }
+
+  if (cmd == "PING") {
+    if (tokens.size() != 1) {
+      error_message_ = "malformed PING request";
+      buffer_.erase(0, line_end + 1);
+      return ParseStatus::Error;
+    }
+    out_request.command = Command::Ping;
+    out_request.key.clear();
     out_request.value.clear();
     buffer_.erase(0, line_end + 1);
     return ParseStatus::Complete;
@@ -193,6 +214,11 @@ ParseStatus ResponseParser::try_parse_response(Response& out_response) {
     buffer_.erase(0, line_end + 1);
     return ParseStatus::Complete;
   }
+  if (line == "PONG") {
+    out_response.type = ResponseType::Pong;
+    buffer_.erase(0, line_end + 1);
+    return ParseStatus::Complete;
+  }
   if (line == "ERROR" || line.rfind("ERROR ", 0) == 0) {
     out_response.type = ResponseType::Error;
     out_response.message = line.size() > 6 ? line.substr(6) : "";
@@ -227,6 +253,34 @@ ParseStatus ResponseParser::try_parse_response(Response& out_response) {
   error_message_ = "unknown response: " + line;
   buffer_.erase(0, line_end + 1);
   return ParseStatus::Error;
+}
+
+Response send_request(int fd, const Request& req) {
+  std::string encoded = encode_request(req);
+  size_t sent = 0;
+  while (sent < encoded.size()) {
+    ssize_t n = ::write(fd, encoded.data() + sent, encoded.size() - sent);
+    if (n > 0) {
+      sent += static_cast<size_t>(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) continue;
+    throw std::runtime_error("failed to write request");
+  }
+
+  ResponseParser parser;
+  Response resp;
+  char buf[4096];
+  while (true) {
+    ParseStatus status = parser.try_parse_response(resp);
+    if (status == ParseStatus::Complete) return resp;
+    if (status == ParseStatus::Error) {
+      throw std::runtime_error("protocol error: " + parser.error_message());
+    }
+    ssize_t n = ::read(fd, buf, sizeof(buf));
+    if (n <= 0) throw std::runtime_error("connection closed while waiting for response");
+    parser.feed(buf, static_cast<size_t>(n));
+  }
 }
 
 }  // namespace kv::protocol

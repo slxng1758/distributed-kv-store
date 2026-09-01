@@ -11,7 +11,10 @@ namespace kv::protocol {
 constexpr size_t kMaxKeyLen = 250;
 constexpr size_t kMaxValueLen = 1024 * 1024;  // 1 MiB
 
-enum class Command { Get, Set, Delete };
+// Ping carries no key/value; it exists purely as a liveness check --
+// Phase 4's failure detector uses it to distinguish "node is up" from
+// "node is unreachable" without touching the store at all.
+enum class Command { Get, Set, Delete, Ping };
 
 struct Request {
   Command command;
@@ -26,6 +29,7 @@ std::string encode_not_found_response();
 std::string encode_ok_response();
 std::string encode_deleted_response();
 std::string encode_error_response(const std::string& message);
+std::string encode_pong_response();
 
 enum class ParseStatus { Incomplete, Complete, Error };
 
@@ -50,7 +54,7 @@ class IncrementalParser {
   std::string error_message_;
 };
 
-enum class ResponseType { Value, NotFound, Ok, Deleted, Error };
+enum class ResponseType { Value, NotFound, Ok, Deleted, Error, Pong };
 
 struct Response {
   ResponseType type;
@@ -69,5 +73,14 @@ class ResponseParser {
   std::string buffer_;
   std::string error_message_;
 };
+
+// Sends `req` on `fd` (a connected, blocking socket) and blocks until a
+// complete response is read back. Throws std::runtime_error on any I/O or
+// protocol failure. Shared by every component that speaks to a
+// kvserver/kvrouter as a client (kvclient, kvbench, kvrouter's backend
+// forwarding, kvfailover, the failure detector's heartbeat) -- extracted
+// here once several independent near-identical copies of this logic
+// existed.
+Response send_request(int fd, const Request& req);
 
 }  // namespace kv::protocol

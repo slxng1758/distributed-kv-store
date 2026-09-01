@@ -165,6 +165,29 @@ void test_response_roundtrips() {
               resp.message == "bad request",
           "ERROR response should round-trip with its message intact");
   }
+  {
+    ResponseParser parser;
+    std::string encoded = encode_pong_response();
+    parser.feed(encoded.data(), encoded.size());
+    Response resp;
+    check(parser.try_parse_response(resp) == ParseStatus::Complete &&
+              resp.type == ResponseType::Pong,
+          "PONG response should round-trip");
+  }
+}
+
+// Phase 4: PING carries no key/value -- just confirms a node is alive.
+void test_ping_roundtrip() {
+  Request req{Command::Ping, "", ""};
+  std::string encoded = encode_request(req);
+  check(encoded == "PING\n", "PING should encode as 'PING\\n' with no key");
+
+  IncrementalParser parser;
+  parser.feed(encoded.data(), encoded.size());
+  Request parsed;
+  check(parser.try_parse_request(parsed) == ParseStatus::Complete,
+        "PING request should parse as Complete");
+  check(parsed.command == Command::Ping, "parsed request should be a Ping");
 }
 
 }  // namespace
@@ -180,6 +203,7 @@ int main() {
   test_malformed_garbage_length();
   test_truncated_value_is_incomplete_not_error();
   test_response_roundtrips();
+  test_ping_roundtrip();
 
   if (failures > 0) {
     std::cerr << failures << " test(s) failed\n";

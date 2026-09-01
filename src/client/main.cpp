@@ -63,33 +63,17 @@ bool build_request(const std::vector<std::string>& tokens, Request& out,
     out.value = value;
     return true;
   }
+  if (cmd == "PING" || cmd == "ping") {
+    if (tokens.size() != 1) {
+      err = "usage: PING";
+      return false;
+    }
+    out.command = Command::Ping;
+    return true;
+  }
 
   err = "unknown command: " + cmd;
   return false;
-}
-
-kv::protocol::Response send_request(int fd, const Request& req) {
-  std::string encoded = kv::protocol::encode_request(req);
-  size_t sent = 0;
-  while (sent < encoded.size()) {
-    ssize_t n = ::write(fd, encoded.data() + sent, encoded.size() - sent);
-    if (n <= 0) throw std::runtime_error("failed to write to server");
-    sent += static_cast<size_t>(n);
-  }
-
-  kv::protocol::ResponseParser parser;
-  kv::protocol::Response resp;
-  char buf[4096];
-  while (true) {
-    auto status = parser.try_parse_response(resp);
-    if (status == kv::protocol::ParseStatus::Complete) return resp;
-    if (status == kv::protocol::ParseStatus::Error) {
-      throw std::runtime_error("protocol error: " + parser.error_message());
-    }
-    ssize_t n = ::read(fd, buf, sizeof(buf));
-    if (n <= 0) throw std::runtime_error("connection closed by server");
-    parser.feed(buf, static_cast<size_t>(n));
-  }
 }
 
 // 0 for any well-formed protocol exchange, including NOT_FOUND; 1 only for
@@ -108,6 +92,9 @@ int print_response(const kv::protocol::Response& resp) {
       return 0;
     case ResponseType::Value:
       std::cout << resp.value << "\n";
+      return 0;
+    case ResponseType::Pong:
+      std::cout << "PONG\n";
       return 0;
     case ResponseType::Error:
       std::cerr << "ERROR " << resp.message << "\n";
@@ -155,7 +142,7 @@ int main(int argc, char** argv) {
         std::cerr << "kvclient: " << err << "\n";
         return 1;
       }
-      return print_response(send_request(sock.fd(), req));
+      return print_response(kv::protocol::send_request(sock.fd(), req));
     }
 
     std::string line;
@@ -168,7 +155,7 @@ int main(int argc, char** argv) {
         std::cerr << "kvclient: " << err << "\n";
         continue;
       }
-      print_response(send_request(sock.fd(), req));
+      print_response(kv::protocol::send_request(sock.fd(), req));
     }
   } catch (const std::exception& e) {
     std::cerr << "kvclient: fatal: " << e.what() << "\n";

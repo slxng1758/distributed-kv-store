@@ -177,6 +177,10 @@ std::string WorkerReactor::handle_request(const protocol::Request& req) {
         return protocol::encode_deleted_response();
       }
       return protocol::encode_not_found_response();
+    case protocol::Command::Ping:
+      // Pure liveness check -- never touches store_. Phase 4's failure
+      // detector relies on this responding promptly and cheaply.
+      return protocol::encode_pong_response();
   }
   return protocol::encode_error_response("internal error");
 }

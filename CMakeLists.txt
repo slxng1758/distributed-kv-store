@@ -51,6 +51,7 @@ target_link_libraries(kvbench PRIVATE kv_common Threads::Threads)
 add_executable(kvrouter
   src/router/main.cpp
   src/router/router.cpp
+  src/router/failure_detector.cpp
 )
 target_link_libraries(kvrouter PRIVATE kv_common Threads::Threads)
 
@@ -58,6 +59,12 @@ add_executable(kvhashreport
   src/tools/hash_report.cpp
 )
 target_link_libraries(kvhashreport PRIVATE kv_common)
+
+add_executable(kvfailover
+  src/tools/failover_bench.cpp
+  src/benchmark/workload.cpp
+)
+target_link_libraries(kvfailover PRIVATE kv_common Threads::Threads)
 
 enable_testing()
 

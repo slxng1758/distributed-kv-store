@@ -38,6 +38,15 @@ void set_nonblocking(int fd);
 // std::runtime_error on failure.
 void set_tcp_nodelay(int fd);
 
+// Bounds how long a blocking recv()/send() on fd can wait (SO_RCVTIMEO /
+// SO_SNDTIMEO). Used by the Phase 4 failure detector so a PING to an
+// unresponsive-but-not-crashed node can't hang the heartbeat thread
+// forever -- a genuinely dead process on localhost fails fast via
+// ECONNREFUSED/ECONNRESET without needing this, but a hung-not-crashed
+// process or a real network partition would not. Throws
+// std::runtime_error on failure.
+void set_recv_timeout(int fd, int timeout_ms);
+
 // Creates, binds (SO_REUSEADDR), and listens on a TCP socket bound to
 // 0.0.0.0:port. Throws std::runtime_error on failure.
 Socket create_listening_socket(uint16_t port, int backlog = 128);

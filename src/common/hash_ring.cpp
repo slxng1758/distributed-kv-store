@@ -69,4 +69,30 @@ std::string ConsistentHashRing::get_node(const std::string& key) const {
   return it->second;
 }
 
+std::vector<std::string> ConsistentHashRing::get_nodes(const std::string& key,
+                                                         size_t count) const {
+  if (ring_.empty()) {
+    throw std::runtime_error("ConsistentHashRing::get_nodes: ring has no nodes");
+  }
+  count = std::min(count, nodes_.size());
+
+  std::vector<std::string> result;
+  uint64_t pos = fnv1a_hash(key);
+  auto it = ring_.lower_bound(pos);
+
+  // Walk clockwise from `pos`, wrapping around, collecting distinct
+  // physical nodes. A single physical node owns many virtual positions
+  // (virtual_nodes_per_node_ of them), so consecutive ring entries often
+  // belong to the same node and must be skipped, not counted twice.
+  while (result.size() < count) {
+    if (it == ring_.end()) it = ring_.begin();
+    const std::string& node_id = it->second;
+    if (std::find(result.begin(), result.end(), node_id) == result.end()) {
+      result.push_back(node_id);
+    }
+    ++it;
+  }
+  return result;
+}
+
 }  // namespace kv

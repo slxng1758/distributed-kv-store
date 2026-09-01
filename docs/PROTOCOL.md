@@ -20,10 +20,11 @@ by exactly one more `\n`.
 ## Grammar
 
 ```
-request      := get-req | set-req | delete-req
+request      := get-req | set-req | delete-req | ping-req
 get-req      := "GET" SP key LF
 set-req      := "SET" SP key SP length LF value-bytes LF
 delete-req   := "DELETE" SP key LF
+ping-req     := "PING" LF
 
 key          := 1*250(VCHAR)        ; no spaces or control chars, max 250 bytes
 length       := 1*10(DIGIT)         ; decimal, 0 <= length <= 1048576 (1 MiB)
@@ -34,8 +35,12 @@ SP := 0x20   LF := 0x0A
 get-response    := ("VALUE" SP length LF value-bytes LF) | "NOT_FOUND" LF | error
 set-response     := "OK" LF | error
 delete-response  := "DELETED" LF | "NOT_FOUND" LF | error
+ping-response    := "PONG" LF
 error            := "ERROR" SP message LF
 ```
+
+`PING` carries no key or value -- it's a pure liveness check (Phase 4's
+router failure detector uses it) and never touches the store.
 
 ## Bounds
 

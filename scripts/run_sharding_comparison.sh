@@ -70,7 +70,12 @@ export BUILD_DIR
 
 echo
 echo "=== 3-node sharded config: starting kvrouter ==="
-"$BUILD_DIR/kvrouter" --port "$ROUTER_PORT" --nodes "$ALL_NODES_CSV" >/tmp/kvrouter3.log 2>&1 &
+# --replicas 1: this script isolates node count as the sole variable
+# (Phase 3's methodology). Since Phase 4, kvrouter defaults to
+# --replicas 2, which would conflate "more nodes" with "more replication
+# overhead" -- pin it to 1 explicitly so this comparison keeps measuring
+# pure sharding, not replication.
+"$BUILD_DIR/kvrouter" --port "$ROUTER_PORT" --nodes "$ALL_NODES_CSV" --replicas 1 >/tmp/kvrouter3.log 2>&1 &
 ROUTER_PID=$!
 wait_ready "$ROUTER_PORT"
 
@@ -85,7 +90,7 @@ stop_pid "$ROUTER_PID"
 
 echo
 echo "=== 1-node config (via the same router binary): starting kvrouter ==="
-"$BUILD_DIR/kvrouter" --port "$ROUTER_PORT" --nodes "$ONE_NODE_CSV" >/tmp/kvrouter1.log 2>&1 &
+"$BUILD_DIR/kvrouter" --port "$ROUTER_PORT" --nodes "$ONE_NODE_CSV" --replicas 1 >/tmp/kvrouter1.log 2>&1 &
 ROUTER_PID=$!
 wait_ready "$ROUTER_PORT"
 

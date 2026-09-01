@@ -131,6 +131,47 @@ void test_modulo_hash_range() {
   }
 }
 
+// Phase 4: get_nodes() is the replica preference list -- this is the API
+// the router uses to decide which nodes replicate a given key.
+void test_get_nodes_preference_list() {
+  kv::ConsistentHashRing ring(150);
+  ring.add_node("nodeA");
+  ring.add_node("nodeB");
+  ring.add_node("nodeC");
+
+  for (const auto& k : make_keys(500)) {
+    auto list = ring.get_nodes(k, 2);
+    check(list.size() == 2, "get_nodes(key, 2) on a 3-node ring should return exactly 2 nodes");
+    check(list[0] == ring.get_node(k),
+          "get_nodes()'s first element must match get_node()'s primary choice");
+    check(list[0] != list[1], "the 2 replicas in a preference list must be distinct nodes");
+  }
+}
+
+void test_get_nodes_deterministic() {
+  kv::ConsistentHashRing ring(150);
+  ring.add_node("nodeA");
+  ring.add_node("nodeB");
+  ring.add_node("nodeC");
+
+  for (const auto& k : make_keys(200)) {
+    auto first = ring.get_nodes(k, 2);
+    auto second = ring.get_nodes(k, 2);
+    check(first == second, "repeated get_nodes() calls on an unchanged ring must agree");
+  }
+}
+
+void test_get_nodes_capped_at_node_count() {
+  kv::ConsistentHashRing ring(150);
+  ring.add_node("nodeA");
+  ring.add_node("nodeB");
+
+  auto list = ring.get_nodes("some-key", 5);
+  check(list.size() == 2,
+        "get_nodes() asking for more replicas than physical nodes exist should "
+        "cap at node_count(), not crash or loop forever");
+}
+
 }  // namespace
 
 int main() {
@@ -140,6 +181,9 @@ int main() {
   test_removing_a_node_only_moves_its_own_keys();
   test_adding_a_node_moves_a_minority_of_keys();
   test_modulo_hash_range();
+  test_get_nodes_preference_list();
+  test_get_nodes_deterministic();
+  test_get_nodes_capped_at_node_count();
 
   if (failures > 0) {
     std::cerr << failures << " test(s) failed\n";

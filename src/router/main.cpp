@@ -13,11 +13,14 @@ namespace {
 void print_usage(const char* prog) {
   std::cerr
       << "Usage: " << prog
-      << " --nodes host1:port1,host2:port2,... [--port PORT] [--vnodes N]\n"
-      << "  --nodes LIST   comma-separated backend kvserver addresses (required)\n"
-      << "  --port PORT    port to listen on for clients (default: 6380)\n"
-      << "  --vnodes N     virtual nodes per physical node on the hash ring "
-         "(default: 150)\n";
+      << " --nodes host1:port1,host2:port2,... [--port PORT] [--vnodes N] "
+         "[--replicas N]\n"
+      << "  --nodes LIST     comma-separated backend kvserver addresses (required)\n"
+      << "  --port PORT      port to listen on for clients (default: 6380)\n"
+      << "  --vnodes N       virtual nodes per physical node on the hash ring "
+         "(default: 150)\n"
+      << "  --replicas N     replication factor: each key is written to N "
+         "distinct nodes (default: 2)\n";
 }
 
 std::vector<kv::NodeAddress> parse_nodes(const std::string& list) {
@@ -42,6 +45,7 @@ std::vector<kv::NodeAddress> parse_nodes(const std::string& list) {
 int main(int argc, char** argv) {
   uint16_t port = 6380;
   size_t vnodes = 150;
+  size_t replicas = 2;
   std::string nodes_arg;
 
   for (int i = 1; i < argc; ++i) {
@@ -51,6 +55,8 @@ int main(int argc, char** argv) {
       nodes_arg = argv[++i];
     } else if (std::strcmp(argv[i], "--vnodes") == 0 && i + 1 < argc) {
       vnodes = static_cast<size_t>(std::atoi(argv[++i]));
+    } else if (std::strcmp(argv[i], "--replicas") == 0 && i + 1 < argc) {
+      replicas = static_cast<size_t>(std::atoi(argv[++i]));
     } else if (std::strcmp(argv[i], "--help") == 0) {
       print_usage(argv[0]);
       return 0;
@@ -66,6 +72,10 @@ int main(int argc, char** argv) {
     print_usage(argv[0]);
     return 1;
   }
+  if (replicas == 0) {
+    std::cerr << "kvrouter: --replicas must be >= 1\n";
+    return 1;
+  }
 
   try {
     std::vector<kv::NodeAddress> nodes = parse_nodes(nodes_arg);
@@ -74,10 +84,10 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    kv::Router router(port, nodes, vnodes);
+    kv::Router router(port, nodes, vnodes, replicas);
     std::cout << "kvrouter listening on port " << port << ", routing to "
               << nodes.size() << " node(s) via consistent hashing (" << vnodes
-              << " vnodes/node)\n";
+              << " vnodes/node), replication factor " << replicas << "\n";
     router.run();
   } catch (const std::exception& e) {
     std::cerr << "kvrouter: fatal: " << e.what() << "\n";

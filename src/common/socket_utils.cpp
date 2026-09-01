@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -60,6 +61,18 @@ void set_tcp_nodelay(int fd) {
   int one = 1;
   if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) < 0) {
     throw_errno("setsockopt(TCP_NODELAY)");
+  }
+}
+
+void set_recv_timeout(int fd, int timeout_ms) {
+  timeval tv{};
+  tv.tv_sec = timeout_ms / 1000;
+  tv.tv_usec = (timeout_ms % 1000) * 1000;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    throw_errno("setsockopt(SO_RCVTIMEO)");
+  }
+  if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+    throw_errno("setsockopt(SO_SNDTIMEO)");
   }
 }
 

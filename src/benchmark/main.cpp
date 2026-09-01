@@ -30,33 +30,6 @@ struct ThreadResult {
   size_t errors = 0;
 };
 
-// Sends one request over an already-connected, persistent socket and
-// blocks for the full response -- closed-loop, non-pipelined measurement,
-// matching realistic client behavior (one request in flight at a time).
-kv::protocol::Response send_request(int fd, const kv::protocol::Request& req) {
-  std::string encoded = kv::protocol::encode_request(req);
-  size_t sent = 0;
-  while (sent < encoded.size()) {
-    ssize_t n = ::write(fd, encoded.data() + sent, encoded.size() - sent);
-    if (n <= 0) throw std::runtime_error("failed to write to server");
-    sent += static_cast<size_t>(n);
-  }
-
-  kv::protocol::ResponseParser parser;
-  kv::protocol::Response resp;
-  char buf[4096];
-  while (true) {
-    auto status = parser.try_parse_response(resp);
-    if (status == kv::protocol::ParseStatus::Complete) return resp;
-    if (status == kv::protocol::ParseStatus::Error) {
-      throw std::runtime_error("protocol error: " + parser.error_message());
-    }
-    ssize_t n = ::read(fd, buf, sizeof(buf));
-    if (n <= 0) throw std::runtime_error("connection closed by server");
-    parser.feed(buf, static_cast<size_t>(n));
-  }
-}
-
 void worker(size_t thread_index, size_t num_requests,
             const kv::bench::RunConfig& cfg, ThreadResult& result) {
   try {
@@ -69,7 +42,9 @@ void worker(size_t thread_index, size_t num_requests,
       kv::protocol::Request req = gen.next();
       auto t0 = std::chrono::steady_clock::now();
       try {
-        kv::protocol::Response resp = send_request(sock.fd(), req);
+        // Closed-loop, non-pipelined measurement, matching realistic
+        // client behavior (one request in flight at a time).
+        kv::protocol::Response resp = kv::protocol::send_request(sock.fd(), req);
         auto t1 = std::chrono::steady_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 

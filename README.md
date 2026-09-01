@@ -6,16 +6,21 @@ networking, concurrency, sharding, replication, and failure recovery.
 
 This is a fundamentals project, not tied to a specific application.
 
-## Status: Phase 3 -- sharding
+## Status: Phase 4 -- replication + failover
 
 - `kvserver` -- N `poll()`-based reactor threads (`--threads`, default 4),
   each owning a disjoint set of connections, sharing one lock-protected
   `KVStore`. `--threads 1` reproduces Phase 1's single-threaded behavior.
-  Zero sharding awareness -- a plain, unmodified node.
-- `kvrouter` -- accepts client connections, routes each key to a backend
-  node via consistent hashing (`--nodes host:port,...`), forwards, relays
-  the response. Speaks the identical client-facing protocol as `kvserver`,
-  so `kvclient`/`kvbench` work against it unmodified.
+  Zero sharding/replication awareness -- a plain, unmodified node.
+- `kvrouter` -- accepts client connections, replicates each key to
+  `--replicas` (default 2) distinct nodes via consistent hashing
+  (`--nodes host:port,...`), and fails over to a surviving replica when
+  one goes down (heartbeat + reactive failure detection). Speaks the
+  identical client-facing protocol as `kvserver`, so `kvclient`/`kvbench`
+  work against it unmodified.
+- `kvfailover` -- kills a node mid-benchmark (precisely timed, in-process)
+  and measures the actual error window around the kill: Phase 4's
+  headline "time until requests are served again" metric.
 - `kvhashreport` -- deterministic (no servers needed) report comparing
   modulo hashing vs. consistent hashing on key-distribution balance and
   remap fraction when the cluster resizes.
@@ -25,11 +30,12 @@ This is a fundamentals project, not tied to a specific application.
 
 See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol,
 [docs/BENCHMARK.md](docs/BENCHMARK.md) for the benchmark methodology,
-[docs/CONCURRENCY.md](docs/CONCURRENCY.md) for Phase 2, and
-[docs/SHARDING.md](docs/SHARDING.md) for Phase 3's architecture, the
-consistent-hashing ring (including a hash-quality bug it exposed), and the
-benchmark results -- a clean win on distribution balance, an honest,
-inconclusive result on throughput.
+[docs/CONCURRENCY.md](docs/CONCURRENCY.md) for Phase 2,
+[docs/SHARDING.md](docs/SHARDING.md) for Phase 3, and
+[docs/REPLICATION.md](docs/REPLICATION.md) for Phase 4's consistency
+model, failure detection design, and the failover benchmark -- including
+the debugging story behind trusting a suspiciously clean 0ms/0-error
+result.
 
 ## Build & run
 
@@ -45,6 +51,7 @@ ctest --test-dir build                 # unit tests
 ./scripts/run_benchmark.sh             # build -> test -> benchmark, end to end
 ./scripts/run_concurrency_comparison.sh   # --threads 1 vs --threads N, same binary
 ./scripts/run_sharding_comparison.sh      # 1 node vs 3 nodes via kvrouter, + hash report
+./scripts/run_failover_benchmark.sh       # kill a node mid-run, measure recovery time
 ```
 
 ## Manual testing

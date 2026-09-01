@@ -46,6 +46,15 @@ class ConsistentHashRing {
   // Throws std::runtime_error if the ring has no nodes.
   std::string get_node(const std::string& key) const;
 
+  // The replica preference list for `key`: up to `count` DISTINCT
+  // physical nodes, starting from get_node(key) and continuing clockwise
+  // around the ring. This is how Phase 4 picks which nodes replicate a
+  // given key -- element 0 is the primary (same as get_node()), the rest
+  // are replicas in fallback order. If the ring has fewer than `count`
+  // distinct nodes, returns however many exist (never more than
+  // node_count()). Throws std::runtime_error if the ring has no nodes.
+  std::vector<std::string> get_nodes(const std::string& key, size_t count) const;
+
   size_t node_count() const { return nodes_.size(); }
   const std::vector<std::string>& nodes() const { return nodes_; }
 
