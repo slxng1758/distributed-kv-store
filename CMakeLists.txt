@@ -73,7 +73,7 @@ add_executable(kv_store_test
   src/server/kv_store.cpp
 )
 target_include_directories(kv_store_test PRIVATE src)
-target_link_libraries(kv_store_test PRIVATE Threads::Threads)
+target_link_libraries(kv_store_test PRIVATE kv_common Threads::Threads)
 add_test(NAME kv_store_test COMMAND kv_store_test)
 
 add_executable(protocol_test

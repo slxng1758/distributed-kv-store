@@ -12,6 +12,10 @@ cd "$ROOT_DIR"
 BUILD_DIR="${BUILD_DIR:-build}"
 PORT="${KVBENCH_PORT:-6380}"
 CONCURRENT_THREADS="${CONCURRENT_THREADS:-4}"
+# Extra kvbench flags, e.g. to reproduce the heavier-workload result noted
+# in docs/CONCURRENCY.md where concurrency actually pays off:
+#   KVBENCH_EXTRA_ARGS="--requests 200000 --value-size 65536" CONCURRENT_THREADS=2 ./scripts/run_concurrency_comparison.sh
+KVBENCH_EXTRA_ARGS="${KVBENCH_EXTRA_ARGS:-}"
 
 echo "=== Building ==="
 cmake -S . -B "$BUILD_DIR" >/dev/null
@@ -69,7 +73,8 @@ run_one() {
   fi
 
   echo "=== Running benchmark: threads=$threads ===" >&2
-  "$BUILD_DIR/kvbench" --port "$PORT" --output "$json_file" >&2
+  # shellcheck disable=SC2086
+  "$BUILD_DIR/kvbench" --port "$PORT" --output "$json_file" $KVBENCH_EXTRA_ARGS >&2
   echo "$json_file"
 }
 

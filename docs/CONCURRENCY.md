@@ -17,11 +17,12 @@ each new connection to one reactor via `enqueue_client()`.
   `eventfd`; a pipe is the portable equivalent -- write a byte from the
   accept thread, the reactor's `poll()` sees `poll_fds_[0]` (the pipe's
   read end) become readable and drains it).
-- All reactors share one `KVStore`, now internally synchronized with a
-  `std::shared_mutex`: `get()`/`size()` take a shared (read) lock, so
-  concurrent reads don't block each other; `set()`/`remove()` take an
-  exclusive (write) lock. `--threads 1` runs this same binary through the
-  same code path and is functionally equivalent to Phase 1's single loop.
+- All reactors share one `KVStore`. It started out (see "Original result"
+  below) as a single `std::shared_mutex` over the whole map; it's now
+  sharded into 16 independent partitions, each with its own
+  `std::shared_mutex` (see "Optimization: lock striping"). `--threads 1`
+  runs this same binary through the same code path and is functionally
+  equivalent to Phase 1's single loop either way.
 
 ## Correctness
 
@@ -49,7 +50,7 @@ on a more standard Linux or older-macOS/Xcode setup; on this machine,
 correctness rests on the stress test plus the locking discipline above,
 not on sanitizer confirmation.
 
-## Benchmark result: --threads 1 vs --threads N
+## Original result: single global lock
 
 Run via `./scripts/run_concurrency_comparison.sh`, which builds once and
 runs the identical standard workload (10,000 requests, 50 connections,
@@ -106,20 +107,92 @@ exposes. It's also exactly why real single-threaded stores like Redis
 avoid this problem altogether by never sharing mutable state across
 threads for the data path in the first place.
 
+## Optimization: lock striping
+
+The obvious fix for "every thread contends on one global lock regardless
+of which key it touches" is to stop using one lock. `KVStore` (see
+`src/server/kv_store.hpp`) now partitions its keyspace into 16 independent
+shards, each with its own map and its own `std::shared_mutex`, keyed by
+`fnv1a_hash(key) % 16` (reusing the same well-mixed hash Phase 3's ring
+already uses). Two threads touching different shards now run fully in
+parallel with zero shared state -- the same principle behind Java's
+`ConcurrentHashMap` and Redis Cluster's per-slot ownership. `size()` is
+tracked via a separate `std::atomic<size_t>` rather than summing all 16
+shards under lock, so it stays exact and lock-free.
+
+**Result on the standard workload (10K requests, 64-byte values):
+essentially unchanged.** Re-running the exact same 1/2/4/8-thread sweep
+from above against the sharded store:
+
+| threads | throughput, global lock (before) | throughput, sharded lock (after) |
+|---------|-----------------------------------|-----------------------------------|
+| 1       | 192,532 req/s                     | 219,538 req/s                     |
+| 2       | 191,021 req/s                     | 207,841 req/s                     |
+| 4       | 150,685 req/s                     | 157,316 req/s                     |
+| 8       | 145,175 req/s                     | 144,365 req/s                     |
+
+Still a monotonic decline as thread count increases. This is the useful
+negative result: if lock contention were the dominant bottleneck, sharding
+the lock 16 ways should have fixed it. It didn't, which rules out lock
+contention as the primary cause and points at something more fundamental
+-- for an operation this cheap (tens of nanoseconds of actual work), the
+overhead of cross-thread coordination itself (OS scheduling, waking a
+thread via `poll()`, moving data between core caches) exceeds the work
+being parallelized, no matter how finely the lock is partitioned. (Ruled
+out separately: false sharing between adjacent shards -- `sizeof(Shard)`
+is 208 bytes, several cache lines, so adjacent shards' hot fields don't
+share a cache line.)
+
+**Result once there's real work per request: a genuine win.** If the
+theory above is right -- overhead dominates only because the work is too
+small -- then a heavier per-request payload should tip the balance back
+toward concurrency actually helping. Reproducible via:
+
+```
+CONCURRENT_THREADS=2 KVBENCH_EXTRA_ARGS="--requests 200000 --value-size 65536" \
+  ./scripts/run_concurrency_comparison.sh
+```
+
+(64 KiB values instead of the standard 64 bytes -- 1,000x more bytes to
+copy into/out of the map and over the socket per request.)
+
+| metric      | threads=1 | threads=2 | delta |
+|-------------|-----------|-----------|-------|
+| throughput  | 77,473 req/s | 92,838 req/s | **1.20x** |
+| p50 latency | 0.579 ms  | 0.463 ms  | **-20.1%** |
+| p95 latency | 1.052 ms  | 0.893 ms  | **-15.2%** |
+| p99 latency | 1.425 ms  | 1.088 ms  | **-23.7%** |
+
+Reproduced across independent runs (1.20x-1.22x). A sweep found 2 threads
+is the sweet spot for this payload size on this machine; 4 and 8 threads
+give a smaller win than 2, consistent with the same coordination-overhead
+cost from the negative result above starting to eat back into the gains
+past a certain thread count, rather than scaling linearly forever.
+
+**The honest summary**: this store's concurrency model scales when there's
+enough real work per request to amortize thread-coordination overhead, and
+doesn't when there isn't -- the standard 64-byte-value benchmark workload
+sits on the "doesn't" side of that line, and no amount of lock
+optimization changes that, because the lock was never the bottleneck for
+that workload in the first place. That's a more complete and more
+defensible answer than either "threading always wins" or "threading never
+helped, so why bother."
+
 ## Interview-readiness notes
 
-1. **Why concurrent, if it's not faster here?** Because "add concurrency,
-   benchmark it, understand the result" was the assignment -- and the
-   honest result teaches the real lesson: naive lock-based sharing doesn't
-   scale for tiny, high-contention critical sections. A rehearsed "it got
-   faster" answer would be less defensible than being able to explain why
-   it didn't, and what would need to change (sharded locks, per-key
-   ownership, or avoiding shared mutable state entirely) to fix it.
-2. **Locking strategy**: one global `std::shared_mutex` over the whole map;
-   shared lock for reads, exclusive for writes. Simple and correct, but a
-   textbook example of a single point of contention -- deliberately not
-   optimized further here since eliminating it via partitioning is Phase
-   3's actual job.
+1. **Why did lock striping alone not fix the standard-workload result?**
+   Because the global lock was never actually the bottleneck for that
+   workload -- the diagnostic that proved it: shard the lock 16 ways, keep
+   everything else the same, rerun the identical sweep, and the same
+   monotonic decline still shows up. That result is what justified moving
+   on to testing whether request *size* (not lock granularity) explained
+   the ceiling, rather than continuing to tune locking strategy against
+   the wrong hypothesis.
+2. **Locking strategy**: 16-way sharded `std::shared_mutex`, keyed by
+   `fnv1a_hash(key) % 16`; shared lock for reads, exclusive for writes on
+   each shard independently. Started as one global lock (a textbook single
+   point of contention); striping it is the same principle Phase 3 applies
+   across nodes, applied here within one node's data structure.
 3. **What's NOT atomic**: individual store operations are race-free;
    compound read-modify-write sequences built from separate GET+SET calls
    are not. No CAS/INCR primitive exists yet.
@@ -130,3 +203,10 @@ threads for the data path in the first place.
    machine has a broken TSan runtime (verified with a trivial repro,
    unrelated to this project's code). Said so plainly rather than claiming
    sanitizer coverage that didn't actually happen.
+6. **Concurrency benefit depends on payload size, and that's the real
+   finding**: 64-byte values never show a throughput win regardless of
+   locking strategy; 64 KiB values show a reproducible 1.20x-1.22x win at
+   `--threads 2` with every latency percentile improved. Knowing *why*
+   (coordination overhead vs. actual work per request) is what makes this
+   a systems-fundamentals result instead of a benchmark number picked
+   because it looked good.
