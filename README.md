@@ -6,12 +6,14 @@ networking, concurrency, sharding, replication, and failure recovery.
 
 This is a fundamentals project, not tied to a specific application.
 
-## Status: Phase 4 -- replication + failover
+## Status: Phase 4 -- replication + failover, plus a lock-striping follow-up
 
 - `kvserver` -- N `poll()`-based reactor threads (`--threads`, default 4),
-  each owning a disjoint set of connections, sharing one lock-protected
-  `KVStore`. `--threads 1` reproduces Phase 1's single-threaded behavior.
-  Zero sharding/replication awareness -- a plain, unmodified node.
+  each owning a disjoint set of connections, sharing one `KVStore`
+  partitioned into 16 independently-locked shards (`fnv1a_hash(key) % 16`)
+  instead of a single global lock. `--threads 1` reproduces Phase 1's
+  single-threaded behavior. Zero sharding/replication awareness -- a
+  plain, unmodified node.
 - `kvrouter` -- accepts client connections, replicates each key to
   `--replicas` (default 2) distinct nodes via consistent hashing
   (`--nodes host:port,...`), and fails over to a surviving replica when
@@ -35,7 +37,11 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol,
 [docs/REPLICATION.md](docs/REPLICATION.md) for Phase 4's consistency
 model, failure detection design, and the failover benchmark -- including
 the debugging story behind trusting a suspiciously clean 0ms/0-error
-result.
+result. [docs/CONCURRENCY.md](docs/CONCURRENCY.md) also covers the
+lock-striping follow-up: sharding the lock 16 ways didn't move the
+64-byte-value benchmark, ruling out lock contention as the bottleneck --
+concurrency here scales with payload size (a genuine 1.20x-1.22x win at
+64 KiB values), not with lock granularity.
 
 ## Build & run
 
